@@ -1,0 +1,28 @@
+{
+  "name": "副業収支管理",
+  "short_name": "副業収支",
+  "description": "副業の売上・経費・仕入・帳簿外を一元管理する単一HTMLアプリ",
+  "lang": "ja",
+  "dir": "ltr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1f6f43",
+  "theme_color": "#1f6f43",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

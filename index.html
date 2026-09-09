@@ -1104,14 +1104,16 @@ function renderOffTable(off){
   off.sort((a,b)=> b.date.localeCompare(a.date));
   $('offTable').innerHTML =
     `<thead><tr><th>日付</th><th>販売先</th><th>内容</th><th class="r">売上</th><th class="r">粗利</th><th>操作</th></tr></thead>`+
-    off.map(o=>`<tr>
+    off.map(o=>{
+      const _prof = Math.max(0, num(o.salesAmt) - num(o.shipAmt||0) - num(o.feeAmt||0));
+      return `<tr>
       <td>${escapeHtml(o.date)}</td>
       <td>${escapeHtml(o.client)}</td>
       <td>${escapeHtml(o.memo)}</td>
       <td class="r">${yen(o.salesAmt)}</td>
-      <td class="r">${yen(num(o.salesAmt))}</td>
+      <td class="r">${yen(_prof)}</td>
       <td><button class="ghost" onclick="openEdit('offbook','${o.id}')">編集</button></td>
-    </tr>`).join('') || `<tr><td colspan="6"><div class="empty">帳簿外データがありません</div></td></tr>`;
+    </tr>`;}).join('') || `<tr><td colspan="6"><div class="empty">帳簿外データがありません</div></td></tr>`;
 }
 
 /* ------------ 履歴タブ ------------ */
@@ -1249,9 +1251,13 @@ function saveEdit(){
       if(v) rec.sup = v;
     }
   } else if(kind==='offbook'){
+    // 粗利 ＝ 売上 − 送料 − 手数料 （売上原価はゼロ、粗利だけ保存）
+    const _sales = num($('eSales').value);
+    const _ship  = num($('eShip')?$('eShip').value:0);
+    const _fee   = num($('eFee')?$('eFee').value:0);
     Object.assign(rec,{ date:$('eDate').value, memo:$('eMemo').value,
-      salesAmt:num($('eSales').value), costAmt:num($('eSales').value),
-      shipAmt:num($('eShip')?$('eShip').value:0), feeAmt:num($('eFee')?$('eFee').value:0),
+      salesAmt:_sales, costAmt:Math.max(0, _sales - _ship - _fee),
+      shipAmt:_ship, feeAmt:_fee,
       client:$('eClient').value.trim(), note:$('eNote').value });
   }
   saveDB(); closeDlg(); refreshAll();
@@ -1369,10 +1375,7 @@ function saveOff(){
   db.offbook.push({ id:uid(), date, memo:$('oMemo').value,
     salesAmt:sales, costAmt:profit, shipAmt:ship, feeAmt:fee,
     client:$('oClient').value, note:$('oNote').value });
-  // 送料・手数料を「経費」に自動連携
-  const label = ($('oMemo').value||'帳簿外')+'（'+($('oClient').value||'出品')+'）';
-  pushAutoCost(date, '送料: '+label,   SHIPPING_ACCOUNT, ship);
-  pushAutoCost(date, '手数料: '+label, FEE_ACCOUNT,     fee);
+  // ※ 帳簿外の送料・手数料は db.cost に自動連携しない（帳簿外は帳簿外だけにとどめる要件）
   saveDB(); clearOff(); $('oMsg').innerHTML='<div class="ok">帳簿外を保存しました</div>';
   refreshAll();
 }
@@ -1870,6 +1873,7 @@ document.addEventListener('DOMContentLoaded', init);
   }catch(_){}
 })();
 </script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","spa":2}' crossorigin="anonymous"></script>
 <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","spa":2}' crossorigin="anonymous"></script>
 </body>
 </html>

@@ -221,7 +221,8 @@ input[type=date],input[type=text],input[type=number],select,textarea{max-width:1
     <div class="kv"><span>📦 仕入合計（参考）</span><b id="kPurch">¥149,800</b></div>
     <div class="kv"><span>📊 帳簿外売上（参考）</span><b id="kOffbook">¥23,198</b></div>
     <div class="kv"><span>📈 帳簿外利益（粗利参考）</span><b id="kOffbookProfit">¥16,941</b></div>
-    <div class="note">※ 参考値は帳簿外（不用品）販売の粗利益および仕入額の合計を表示</div>
+    <div class="kv"><span>📮 帳簿外経費（送料+手数料）</span><b id="kOffExp">¥0</b></div>
+    <div class="note">※ 参考値は帳簿外（不用品）販売の粗利益および仕入額の合計を表示。帳簿外経費は帳簿の経費には含めず、別集計します。</div>
   </div>
 
   <div class="card">
@@ -231,6 +232,7 @@ input[type=date],input[type=text],input[type=number],select,textarea{max-width:1
       <span><i style="background:#1f6f43"></i>売上</span>
       <span><i style="background:#b94545"></i>経費</span>
       <span><i style="background:#2e8b5a"></i>帳簿外(参考)</span>
+      <span><i style="background:#8b6f47"></i>帳簿外経費</span>
       <span><i style="background:#f0a04b"></i>仕入(参考)</span>
     </div>
   </div>
@@ -423,7 +425,7 @@ input[type=date],input[type=text],input[type=number],select,textarea{max-width:1
         <label>種別</label>
         <select id="hKind">
           <option>すべて</option><option>売上</option><option>経費</option>
-          <option>仕入（参考）</option><option>帳簿外（参考）</option>
+          <option>仕入（参考）</option><option>帳簿外（参考）</option><option>帳簿外（経費）</option>
         </select>
       </div>
       <div>
@@ -465,6 +467,7 @@ input[type=date],input[type=text],input[type=number],select,textarea{max-width:1
       <button class="ghost" id="dlExpenseCsv">経費CSV</button>
       <button class="ghost" id="dlPurchCsv">仕入CSV（参考）</button>
       <button class="ghost" id="dlOffbookCsv">帳簿外CSV（参考）</button>
+      <button class="ghost" id="dlOffExpCsv">帳簿外経費CSV</button>
     </div>
   </div>
 
@@ -562,6 +565,51 @@ input[type=date],input[type=text],input[type=number],select,textarea{max-width:1
     db.schemaVersion = 2;
     localStorage.setItem(LS, JSON.stringify(db));
     console.log('[migration] schema v2 適用済');
+  }catch(_){}
+})();
+</script>
+
+<script>/*schema v3: 帳簿外経費の別集計 + 旧cost混入の救済*/
+(function(){
+  try{
+    var LS = 'fukudb.v1';
+    var raw = localStorage.getItem(LS);
+    if(!raw) return;
+    var db = JSON.parse(raw);
+    if(!db || typeof db !== 'object') return;
+    if((db.schemaVersion||0) >= 3) return;
+
+    // 1) オフブックに shipAmt / feeAmt フィールドが無ければ 0 初期化
+    if(Array.isArray(db.offbook)){
+      db.offbook.forEach(function(o){
+        if(typeof o.shipAmt !== 'number') o.shipAmt = 0;
+        if(typeof o.feeAmt  !== 'number') o.feeAmt  = 0;
+      });
+    }
+
+    // 2) 旧saveOff()でdb.costに混入した '送料: ' / '手数料: ' (note:'(売上連動)') を救済
+    //    → 対応するオフブックが見つかれば、cost から取り除く（オフブック側に既に shipAmt/feeAmt があるため）
+    if(Array.isArray(db.cost) && Array.isArray(db.offbook)){
+      var datesByYM = {};
+      db.offbook.forEach(function(o){ (datesByYM[o.date] = datesByYM[o.date] || []).push(o); });
+      db.cost = db.cost.filter(function(c){
+        var fromOff = (c.note === '(売上連動)')
+          && (typeof c.memo==='string')
+          && (/^(送料|手数料):\s/.test(c.memo));
+        if(!fromOff) return true; // 売上連動の正当事由は残す
+        var sameDay = datesByYM[c.date] || [];
+        var matched = sameDay.some(function(o){
+          return (c.memo.indexOf('送料:')===0 && num(o.shipAmt)>0)
+              || (c.memo.indexOf('手数料:')===0 && num(o.feeAmt)>0);
+        });
+        // マッチしたら重複なので除去。マッチしない旧書式のものは安全のため残す。
+        return !matched;
+      });
+    }
+
+    db.schemaVersion = 3;
+    localStorage.setItem(LS, JSON.stringify(db));
+    console.log('[migration] schema v3 適用済（帳簿外経費の別集計 + 旧cost混入除去）');
   }catch(_){}
 })();
 </script>
@@ -826,6 +874,8 @@ function renderDash(){
   const sumPurch = purch.reduce((a,b)=>a+num(b.amount),0);
   const sumOff   = off.reduce((a,b)=>a+num(b.salesAmt),0);
   const sumOffProf = off.reduce((a,b)=>a+(num(b.salesAmt)-num(b.costAmt)),0);
+  // 帳簿外経費 ＝ 帳簿外売上に紐づく 送料＋手数料。帳簿の経費には含めない（別集計）
+  const sumOffExp = off.reduce((a,b)=>a+num(b.shipAmt)+num(b.feeAmt),0);
 
   $('kSales').textContent = yen(sumSales);
   $('kCost').textContent  = yen(sumCost);
@@ -835,6 +885,7 @@ function renderDash(){
   $('kPurch').textContent = yen(sumPurch);
   $('kOffbook').textContent = yen(sumOff);
   $('kOffbookProfit').textContent = yen(sumOffProf);
+  const kex = $('kOffExp'); if(kex) kex.textContent = yen(sumOffExp);
 
   renderMonthly(sales, cost, off, purch);
   renderSalesMajor(sales);
@@ -856,9 +907,10 @@ function renderMonthly(sales, cost, off, purch){
     s: sales.filter(x=> +x.date.slice(5,7)-1===m).reduce((a,b)=>a+num(b.amount),0),
     c: cost .filter(x=> +x.date.slice(5,7)-1===m).reduce((a,b)=>a+num(b.amount),0),
     o: off  .filter(x=> +x.date.slice(5,7)-1===m).reduce((a,b)=>a+num(b.salesAmt),0),
+    oe: off .filter(x=> +x.date.slice(5,7)-1===m).reduce((a,b)=>a+num(b.shipAmt)+num(b.feeAmt),0),
     p: purch.filter(x=> +x.date.slice(5,7)-1===m).reduce((a,b)=>a+num(b.amount),0)
   }));
-  const maxV = Math.max(1, ...sums.flatMap(m=>[m.s,m.c*0.7,m.o,m.p]));
+  const maxV = Math.max(1, ...sums.flatMap(m=>[m.s,m.c*0.7,m.o,m.oe,m.p]));
   const W=720,H=240,padL=42,padR=10,padT=10,padB=28;
   const bw=(W-padL-padR)/12;
   let svg = `<svg class="chartsvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
@@ -874,9 +926,11 @@ function renderMonthly(sales, cost, off, purch){
     const hs = (H-padT-padB)*(m.s/maxV);
     const hc = (H-padT-padB)*(m.c/maxV);
     const ho = (H-padT-padB)*(m.o/maxV);
+    const hoe = (H-padT-padB)*(m.oe/maxV);
     const hp = (H-padT-padB)*(m.p/maxV);
     svg += `<rect x="${x}" y="${H-padB-hs}" width="${w}" height="${hs}" fill="#1f6f43" opacity=".85"/>`;
     svg += `<rect x="${x}" y="${H-padB-ho}" width="${w}" height="${ho}" fill="#2e8b5a" opacity=".55"/>`;
+    svg += `<rect x="${x}" y="${H-padB-hoe}" width="${w}" height="${hoe}" fill="#8b6f47" opacity=".7"/>`;
     svg += `<rect x="${x}" y="${H-padB-hp}" width="${w}" height="${hp}" fill="#f0a04b" opacity=".75"/>`;
     svg += `<rect x="${x}" y="${H-padB-hc}" width="${w}" height="${hc}" fill="#b94545" opacity=".8"/>`;
     svg += `<text x="${x+w/2}" y="${H-padB+14}" text-anchor="middle" font-size="10" fill="#6b7a72">${i+1}</text>`;
@@ -948,12 +1002,16 @@ function renderMonthlyDetail(){
     '仕入': rows.filter(r=>r.kind.startsWith('仕入')).length,
     '帳簿外': rows.filter(r=>r.kind.startsWith('帳簿外')).length
   };
+  // 帳簿外経費は別集計（帳簿の経費には含めない）
+  const sumOffExpRow = (db.offbook||[]).filter(x=>x.date && String(x.date).startsWith(ym))
+    .reduce((a,b)=>a+num(b.shipAmt)+num(b.feeAmt),0);
   sum.innerHTML =
     `<b>${ym}</b> の明細：`
     + ` 売上 <b>${yen(sums['売上'])}</b>(${cnts['売上']}件) /`
     + ` 経費 <b>${yen(sums['経費'])}</b>(${cnts['経費']}件) /`
     + ` 仕入 <b>${yen(sums['仕入（参考）'])}</b>(${cnts['仕入']}件) /`
-    + ` 帳簿外 <b>${yen(sums['帳簿外（参考）'])}</b>(${cnts['帳簿外']}件)`;
+    + ` 帳簿外 <b>${yen(sums['帳簿外（参考）'])}</b>(${cnts['帳簿外']}件) /`
+    + ` 帳簿外経費 <b>${yen(sumOffExpRow)}</b>`;
   tbl.innerHTML =
     `<thead><tr><th>日付</th><th>種別</th><th>科目/区分</th><th>小分類/摘要</th><th>取引先/仕入先</th><th>内容</th><th class="r">金額</th></tr></thead>`
     + rows.map(r=>`<tr>
@@ -1124,6 +1182,12 @@ function renderHist(){
   if(kind==='すべて'||kind==='経費') rows = rows.concat(db.cost.map(c=>({...c, _kind:'経費'})));
   if(kind==='すべて'||kind==='仕入（参考）') rows = rows.concat(db.purch.map(p=>({...p, _kind:'仕入（参考）'})));
   if(kind==='すべて'||kind==='帳簿外（参考）')rows= rows.concat(db.offbook.map(o=>({...o, _kind:'帳簿外（参考）'})));
+  if(kind==='すべて'||kind==='帳簿外（経費）'){
+    db.offbook.forEach(o=>{
+      if(num(o.shipAmt)>0) rows.push({...o, _kind:'帳簿外（経費）', memo:'送料: '+(o.memo||''), amt:num(o.shipAmt), acc:'荷造運賃'});
+      if(num(o.feeAmt)>0)  rows.push({...o, _kind:'帳簿外（経費）', memo:'手数料: '+(o.memo||''), amt:num(o.feeAmt),  acc:'支払手数料'});
+    });
+  }
   rows.sort((a,b)=> (order==='desc'?-1:1) * (b.date||'').localeCompare(a.date||''));
   $('histTable').innerHTML =
     `<thead><tr><th>日付</th><th>種別</th><th>内容</th><th>区分</th><th class="r">金額</th><th>操作</th></tr></thead>`+
@@ -1133,7 +1197,8 @@ function renderHist(){
       else if(r._kind==='経費') kbn = r.acc;
       else if(r._kind==='仕入（参考）') kbn = r.cat;
       else if(r._kind==='帳簿外（参考）'){ kbn='帳簿外'; amt = num(r.salesAmt)-num(r.costAmt); }
-      const kindKey = ({'売上':'sale','経費':'cost','仕入（参考）':'purch','帳簿外（参考）':'offbook'})[r._kind];
+      else if(r._kind==='帳簿外（経費）'){ kbn = r.acc||''; }
+      const kindKey = ({'売上':'sale','経費':'cost','仕入（参考）':'purch','帳簿外（参考）':'offbook','帳簿外（経費）':'offbook'})[r._kind];
       return `<tr>
         <td>${escapeHtml(r.date)}</td>
         <td><span class="pill">${escapeHtml(r._kind)}</span></td>
@@ -1413,6 +1478,17 @@ function exportOffbookCSV(){
   const rows = off.map(o=> [o.date, o.client, o.memo, o.salesAmt, o.costAmt, (num(o.salesAmt)-num(o.costAmt)), o.note]);
   downloadCSV(`offbook_${filter.year}_${Date.now()}.csv`, csvBuild(
     ['日付','販売先','内容','売上','仕入相当','利益','備考'], rows));
+}
+function exportOffExpCSV(){
+  // 帳簿外経費（送料・手数料）をオフブックから別集計でCSV化
+  const { off } = periodData(filter);
+  const rows = [];
+  off.forEach(o=>{
+    if(num(o.shipAmt)>0) rows.push([o.date, '荷造運賃', '送料: '+(o.memo||'')+'（'+(o.client||'出品')+'）', num(o.shipAmt), '(帳簿外経費)']);
+    if(num(o.feeAmt)>0)  rows.push([o.date, '支払手数料','手数料: '+(o.memo||'')+'（'+(o.client||'出品')+'）', num(o.feeAmt),  '(帳簿外経費)']);
+  });
+  downloadCSV(`offexp_${filter.year}_${Date.now()}.csv`, csvBuild(
+    ['日付','経費区分','内容','金額','備考(帳簿外経費)'], rows));
 }
 
 /* ------------ PDF出力（確定申告簡易レポート） ------------ */
@@ -1846,6 +1922,7 @@ function init(){
   bindEl('dlExpenseCsv',()=> exportExpenseCSV());
   bindEl('dlPurchCsv',  ()=> exportPurchCSV());
   bindEl('dlOffbookCsv',()=> exportOffbookCSV());
+  bindEl('dlOffExpCsv',()=> exportOffExpCSV());
   bindEl('dlTaxPdf',    ()=> exportTaxPDF());
   bindEl('csvSaleFile', null, 'change', ()=> importSaleCSV());
   bindEl('csvCostFile', null, 'change', ()=> importCostCSV());

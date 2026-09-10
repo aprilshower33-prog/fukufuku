@@ -68,6 +68,39 @@
   th{background:#eef3ee;color:var(--pri);font-weight:700;font-size:12px;}
   td.r,th.r{text-align:right;font-variant-numeric:tabular-nums;}
   .scroll-x{overflow-x:auto;}
+  /* 帳簿外明細：iPhoneで見やすい2行カード化 */
+  #offTable{border-collapse:separate;border-spacing:0;word-break:break-word;overflow-wrap:anywhere;}
+  #offTable td.off-memo{word-break:break-word;overflow-wrap:anywhere;}
+  /* デスクトップ：テーブル表示（既定） */
+  @media (max-width:480px){
+    #offTable thead{display:none;}
+    #offTable,#offTable tbody,#offTable tr,#offTable td{display:block;width:auto;}
+    #offTable{border:0;}
+    #offTable tbody tr{
+      background:#fff;border:1px solid var(--bd);border-radius:10px;
+      padding:8px 10px;margin-bottom:8px;
+    }
+    #offTable tbody tr + tr{border-top:1px solid var(--bd);}
+    /* 上段：商品名（ひと目で見える） */
+    #offTable td.off-memo{
+      display:block;font-size:14px;font-weight:700;color:#1f2a24;
+      border-bottom:1px dashed var(--bd);padding:0 0 6px 0;margin-bottom:6px;
+      line-height:1.45;
+    }
+    /* 下段：メタ・金額ラベルの左右フレックス */
+    #offTable td.off-cell{
+      display:flex;justify-content:space-between;align-items:center;
+      padding:3px 0;border:0;font-size:13px;
+    }
+    #offTable td.off-cell .lbl{color:var(--mut);font-size:11px;}
+    #offTable td.off-cell .val{margin-left:auto;}
+    #offTable td.off-action{padding:6px 0 0 0;border-top:1px dashed var(--bd);margin-top:6px;}
+    #offTable td.off-action .ghost{width:100%;}
+    /* インライン入力欄はフル幅 */
+    #offTable .offCell{width:100%!important;text-align:right!important;font-size:14px!important;padding:6px 8px!important;}
+    #offTable .offCell + [data-action="resetProfit"]{margin-left:6px;}
+    .scroll-x:has(#offTable){overflow-x:visible;}
+  }
   .muted{color:var(--mut);font-size:12px;}
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef3ee;
     color:var(--pri);font-size:11px;font-weight:700;}
@@ -412,7 +445,7 @@ input[type=date],input[type=text],input[type=number],select,textarea{max-width:1
   </div>
   <div class="card">
     <h2>📋 帳簿外一覧（期間中・参考）</h2>
-    <div class="scroll-x"><table id="offTable"></table></div>
+    <div><table id="offTable"></table></div>
   </div>
 </section>
 
@@ -1160,22 +1193,54 @@ function renderPurchTable(purch){
 }
 function renderOffTable(off){
   off.sort((a,b)=> b.date.localeCompare(a.date));
-  $('offTable').innerHTML =
-    `<thead><tr><th>日付</th><th>販売先</th><th>内容</th><th class="r">売上</th><th class="r">粗利</th><th class="r">送料</th><th class="r">手数料</th><th>操作</th></tr></thead>`+
-    off.map(o=>{
-      const manual = !!o.profitManual;
-      const bg = manual ? 'background:#fff7d6' : '';
-      const tag = manual ? `<button class="ghost" data-action="resetProfit" data-id="${o.id}" title="粗利の自動計算に戻す" style="margin-left:4px;padding:2px 6px">↺</button>` : '';
-      return `<tr data-off-id="${o.id}">
+  // 行データを配列として構築
+  const head = `<thead><tr><th>日付</th><th>販売先</th><th>内容</th><th class="r">売上</th><th class="r">粗利</th><th class="r">送料</th><th class="r">手数料</th><th>操作</th></tr></thead>`;
+  const rows = off.map(o=>{
+    const manual = !!o.profitManual;
+    const bg = manual ? 'background:#fff7d6' : '';
+    const tag = manual ? `<button class="ghost" data-action="resetProfit" data-id="${o.id}" title="粗利の自動計算に戻す" style="margin-left:4px;padding:2px 6px">↺</button>` : '';
+    return `<tr data-off-id="${o.id}">
       <td>${escapeHtml(o.date)}</td>
       <td>${escapeHtml(o.client)}</td>
-      <td>${escapeHtml(o.memo)}</td>
-      <td class="r"><input type="number" class="offCell" data-field="salesAmt" data-id="${o.id}" value="${num(o.salesAmt)}" min="0" step="1" style="width:88px;text-align:right"></td>
-      <td class="r"><input type="number" class="offCell" data-field="costAmt"  data-id="${o.id}" value="${num(o.manualProfit ?? Math.max(0, num(o.salesAmt)-num(o.shipAmt||0)-num(o.feeAmt||0)))}" min="0" step="1" style="width:88px;text-align:right;${bg}">${tag}</td>
-      <td class="r"><input type="number" class="offCell" data-field="shipAmt"  data-id="${o.id}" value="${num(o.shipAmt||0)}" min="0" step="1" style="width:72px;text-align:right"></td>
-      <td class="r"><input type="number" class="offCell" data-field="feeAmt"   data-id="${o.id}" value="${num(o.feeAmt||0)}"  min="0" step="1" style="width:72px;text-align:right"></td>
-      <td><button class="ghost" onclick="openEdit('offbook','${o.id}')">詳細</button></td>
-    </tr>`;}).join('') || `<tr><td colspan="8"><div class="empty">帳簿外データがありません</div></td></tr>`;
+      <td class="off-memo">${escapeHtml(o.memo||'')}</td>
+      <td class="r" data-label="売上"><input type="number" class="offCell" data-field="salesAmt" data-id="${o.id}" value="${num(o.salesAmt)}" min="0" step="1" style="width:88px;text-align:right"></td>
+      <td class="r" data-label="粗利"><input type="number" class="offCell" data-field="costAmt"  data-id="${o.id}" value="${num(o.manualProfit ?? Math.max(0, num(o.salesAmt)-num(o.shipAmt||0)-num(o.feeAmt||0)))}" min="0" step="1" style="width:88px;text-align:right;${bg}">${tag}</td>
+      <td class="r" data-label="送料"><input type="number" class="offCell" data-field="shipAmt"  data-id="${o.id}" value="${num(o.shipAmt||0)}" min="0" step="1" style="width:72px;text-align:right"></td>
+      <td class="r" data-label="手数料"><input type="number" class="offCell" data-field="feeAmt"   data-id="${o.id}" value="${num(o.feeAmt||0)}"  min="0" step="1" style="width:72px;text-align:right"></td>
+      <td data-label="操作" class="off-action"><button class="ghost" onclick="openEdit('offbook','${o.id}')">詳細</button></td>
+    </tr>`;
+  }).join('');
+  $('offTable').innerHTML = head + (rows || `<tr><td colspan="8"><div class="empty">帳簿外データがありません</div></td></tr>`);
+  // iPhone幅用：data-label を使ってモバイル時にラベルを差し込む（CSS onlyだとできないのでJSで補助）
+  const tbl = $('offTable');
+  if(tbl && window.matchMedia && window.matchMedia('(max-width:480px)').matches){
+    tbl.querySelectorAll('tbody tr').forEach(tr=>{
+      const memo = tr.querySelector('td.off-memo');
+      // メタ行を構築
+      const date  = tr.children[0]?.textContent || '';
+      const acc   = tr.children[1]?.textContent || '';
+      const sales = tr.children[3]?.querySelector('input');
+      const prof  = tr.children[4]?.querySelector('input');
+      const ship  = tr.children[5]?.querySelector('input');
+      const fee   = tr.children[6]?.querySelector('input');
+      const meta  = document.createElement('div');
+      meta.style.cssText='font-size:11px;color:var(--mut);margin-bottom:4px;line-height:1.3';
+      meta.textContent = (date?date+'　':'') + (acc?('販売先: '+acc):'');
+      if(memo) memo.parentNode.insertBefore(meta, memo.nextSibling);
+      // 数値セルをflex-block化（CSS off-cell を間接適用）
+      [sales,prof,ship,fee].forEach(inp=>{
+        if(!inp) return;
+        const td = inp.closest('td');
+        if(!td) return;
+        td.classList.add('off-cell');
+        const lbl = td.getAttribute('data-label')||'';
+        td.innerHTML = `<span class="lbl">${escapeHtml(lbl)}</span><span class="val"></span>`;
+        td.querySelector('.val').appendChild(inp);
+      });
+      // 操作セルを全幅化
+      const act = tr.children[7]; if(act){ act.classList.add('off-action'); }
+    });
+  }
 }
 /* 帳簿外一覧 インライン編集ハンドラ（initseltで委譲） */
 function handleOffCellChange(target){

@@ -1161,17 +1161,76 @@ function renderPurchTable(purch){
 function renderOffTable(off){
   off.sort((a,b)=> b.date.localeCompare(a.date));
   $('offTable').innerHTML =
-    `<thead><tr><th>日付</th><th>販売先</th><th>内容</th><th class="r">売上</th><th class="r">粗利</th><th>操作</th></tr></thead>`+
+    `<thead><tr><th>日付</th><th>販売先</th><th>内容</th><th class="r">売上</th><th class="r">粗利</th><th class="r">送料</th><th class="r">手数料</th><th>操作</th></tr></thead>`+
     off.map(o=>{
-      const _prof = Math.max(0, num(o.salesAmt) - num(o.shipAmt||0) - num(o.feeAmt||0));
-      return `<tr>
+      const manual = !!o.profitManual;
+      const bg = manual ? 'background:#fff7d6' : '';
+      const tag = manual ? `<button class="ghost" data-action="resetProfit" data-id="${o.id}" title="粗利の自動計算に戻す" style="margin-left:4px;padding:2px 6px">↺</button>` : '';
+      return `<tr data-off-id="${o.id}">
       <td>${escapeHtml(o.date)}</td>
       <td>${escapeHtml(o.client)}</td>
       <td>${escapeHtml(o.memo)}</td>
-      <td class="r">${yen(o.salesAmt)}</td>
-      <td class="r">${yen(_prof)}</td>
-      <td><button class="ghost" onclick="openEdit('offbook','${o.id}')">編集</button></td>
-    </tr>`;}).join('') || `<tr><td colspan="6"><div class="empty">帳簿外データがありません</div></td></tr>`;
+      <td class="r"><input type="number" class="offCell" data-field="salesAmt" data-id="${o.id}" value="${num(o.salesAmt)}" min="0" step="1" style="width:88px;text-align:right"></td>
+      <td class="r"><input type="number" class="offCell" data-field="costAmt"  data-id="${o.id}" value="${num(o.manualProfit ?? Math.max(0, num(o.salesAmt)-num(o.shipAmt||0)-num(o.feeAmt||0)))}" min="0" step="1" style="width:88px;text-align:right;${bg}">${tag}</td>
+      <td class="r"><input type="number" class="offCell" data-field="shipAmt"  data-id="${o.id}" value="${num(o.shipAmt||0)}" min="0" step="1" style="width:72px;text-align:right"></td>
+      <td class="r"><input type="number" class="offCell" data-field="feeAmt"   data-id="${o.id}" value="${num(o.feeAmt||0)}"  min="0" step="1" style="width:72px;text-align:right"></td>
+      <td><button class="ghost" onclick="openEdit('offbook','${o.id}')">詳細</button></td>
+    </tr>`;}).join('') || `<tr><td colspan="8"><div class="empty">帳簿外データがありません</div></td></tr>`;
+}
+/* 帳簿外一覧 インライン編集ハンドラ（initseltで委譲） */
+function handleOffCellChange(target){
+  if(!target || !target.classList || !target.classList.contains('offCell')) return;
+  const id    = target.dataset.id;
+  const field = target.dataset.field;
+  const rec   = (db.offbook||[]).find(x=>x.id===id);
+  if(!rec) return;
+  const v = num(target.value);
+  if(field==='salesAmt') rec.salesAmt = v;
+  else if(field==='shipAmt') rec.shipAmt = v;
+  else if(field==='feeAmt')  rec.feeAmt  = v;
+  else if(field==='costAmt'){
+    rec.manualProfit = v;
+    rec.profitManual = true;
+  }
+  if(field!=='costAmt'){
+    if(rec.profitManual){
+      // 手動モード中は自動再計算しない
+    } else {
+      const auto = Math.max(0, num(rec.salesAmt)-num(rec.shipAmt||0)-num(rec.feeAmt||0));
+      rec.manualProfit = auto;
+      const cell = target.closest('tr').querySelector('input[data-field="costAmt"]');
+      if(cell){ cell.value = auto; cell.style.background=''; target.closest('tr').querySelector('[data-action="resetProfit"]')?.remove(); }
+    }
+  } else {
+    // 手動編集した
+    target.style.background = '#fff7d6';
+    const tr = target.closest('tr');
+    if(tr && !tr.querySelector('[data-action="resetProfit"]')){
+      const btn = document.createElement('button');
+      btn.className='ghost'; btn.dataset.action='resetProfit'; btn.dataset.id=id;
+      btn.title='粗利の自動計算に戻す'; btn.style.cssText='margin-left:4px;padding:2px 6px';
+      btn.textContent='↺';
+      target.insertAdjacentElement('afterend', btn);
+    }
+  }
+  saveDB();
+  // ダッシュボード・月次グラフ・履歴の即時反映（テーブル自体は壊さない）
+  try{
+    const { sales, cost, purch, off } = periodData(filter);
+    const sumOffProf = off.reduce((a,b)=>a+num(b.manualProfit ?? (num(b.salesAmt)-num(b.shipAmt||0)-num(b.feeAmt||0))),0);
+    const sumOffExp  = off.reduce((a,b)=>a+num(b.shipAmt)+num(b.feeAmt),0);
+    const kp=$('kOffbookProfit'); if(kp) kp.textContent = yen(sumOffProf);
+    const kex=$('kOffExp'); if(kex) kex.textContent = yen(sumOffExp);
+    renderMonthly(sales, cost, off, purch);
+  }catch(_){}
+}
+function resetOffProfit(id){
+  const rec = (db.offbook||[]).find(x=>x.id===id);
+  if(!rec) return;
+  rec.profitManual = false;
+  rec.manualProfit = Math.max(0, num(rec.salesAmt)-num(rec.shipAmt||0)-num(rec.feeAmt||0));
+  saveDB();
+  renderDash();
 }
 
 /* ------------ 履歴タブ ------------ */
@@ -1923,6 +1982,17 @@ function init(){
   bindEl('dlPurchCsv',  ()=> exportPurchCSV());
   bindEl('dlOffbookCsv',()=> exportOffbookCSV());
   bindEl('dlOffExpCsv',()=> exportOffExpCSV());
+  // 帳簿外一覧インライン編集のイベント委譲
+  try{
+    const ofb = $('offTable');
+    if(ofb){
+      ofb.addEventListener('change', e=> handleOffCellChange(e.target));
+      ofb.addEventListener('click',   e=>{
+        const btn = e.target.closest && e.target.closest('[data-action="resetProfit"]');
+        if(btn){ resetOffProfit(btn.dataset.id); }
+      });
+    }
+  }catch(e){ errLog('offTable init: '+e.message); }
   bindEl('dlTaxPdf',    ()=> exportTaxPDF());
   bindEl('csvSaleFile', null, 'change', ()=> importSaleCSV());
   bindEl('csvCostFile', null, 'change', ()=> importCostCSV());

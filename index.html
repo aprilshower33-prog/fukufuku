@@ -906,7 +906,12 @@ function renderDash(){
   const sumCost  = cost.reduce((a,b)=>a+num(b.amount),0);
   const sumPurch = purch.reduce((a,b)=>a+num(b.amount),0);
   const sumOff   = off.reduce((a,b)=>a+num(b.salesAmt),0);
-  const sumOffProf = off.reduce((a,b)=>a+(num(b.salesAmt)-num(b.costAmt)),0);
+  // 帳簿外粗利：manualProfit（旧 costAmt に固着した値）を信用しない。常に売上−送料−手数料から再計算
+  //   手動モード（profitManual=true）のときだけ manualProfit を採用
+  const sumOffProf = off.reduce((a,b)=>{
+    if(b && b.profitManual && b.manualProfit!=null) return a + num(b.manualProfit);
+    return a + Math.max(0, num(b.salesAmt) - num(b.shipAmt||0) - num(b.feeAmt||0));
+  },0);
   // 帳簿外経費 ＝ 帳簿外売上に紐づく 送料＋手数料。帳簿の経費には含めない（別集計）
   const sumOffExp = off.reduce((a,b)=>a+num(b.shipAmt)+num(b.feeAmt),0);
 
@@ -1194,19 +1199,21 @@ function renderPurchTable(purch){
 function renderOffTable(off){
   off.sort((a,b)=> b.date.localeCompare(a.date));
   // 行データを配列として構築
-  const head = `<thead><tr><th>日付</th><th>販売先</th><th>内容</th><th class="r">売上</th><th class="r">粗利</th><th class="r">送料</th><th class="r">手数料</th><th>操作</th></tr></thead>`;
+  const head = `<thead><tr><th>日付</th><th>販売先</th><th>内容</th><th class="r">売上</th><th class="r">送料</th><th class="r">手数料</th><th class="r">粗利</th><th>操作</th></tr></thead>`;
   const rows = off.map(o=>{
     const manual = !!o.profitManual;
+    const autoProfit = Math.max(0, num(o.salesAmt)-num(o.shipAmt||0)-num(o.feeAmt||0));
+    const profitVal = manual && o.manualProfit!=null ? num(o.manualProfit) : autoProfit;
     const bg = manual ? 'background:#fff7d6' : '';
     const tag = manual ? `<button class="ghost" data-action="resetProfit" data-id="${o.id}" title="粗利の自動計算に戻す" style="margin-left:4px;padding:2px 6px">↺</button>` : '';
     return `<tr data-off-id="${o.id}">
       <td>${escapeHtml(o.date)}</td>
       <td>${escapeHtml(o.client)}</td>
       <td class="off-memo">${escapeHtml(o.memo||'')}</td>
-      <td class="r" data-label="売上"><input type="number" class="offCell" data-field="salesAmt" data-id="${o.id}" value="${num(o.salesAmt)}" min="0" step="1" style="width:88px;text-align:right"></td>
-      <td class="r" data-label="粗利"><input type="number" class="offCell" data-field="costAmt"  data-id="${o.id}" value="${num(o.manualProfit ?? Math.max(0, num(o.salesAmt)-num(o.shipAmt||0)-num(o.feeAmt||0)))}" min="0" step="1" style="width:88px;text-align:right;${bg}">${tag}</td>
-      <td class="r" data-label="送料"><input type="number" class="offCell" data-field="shipAmt"  data-id="${o.id}" value="${num(o.shipAmt||0)}" min="0" step="1" style="width:72px;text-align:right"></td>
-      <td class="r" data-label="手数料"><input type="number" class="offCell" data-field="feeAmt"   data-id="${o.id}" value="${num(o.feeAmt||0)}"  min="0" step="1" style="width:72px;text-align:right"></td>
+      <td class="r" data-label="売上"><input type="number" class="offCell" data-field="salesAmt" data-id="${o.id}" value="${num(o.salesAmt)}" min="0" step="1" style="width:84px;text-align:right"></td>
+      <td class="r" data-label="送料"><input type="number" class="offCell" data-field="shipAmt"  data-id="${o.id}" value="${num(o.shipAmt||0)}" min="0" step="1" style="width:68px;text-align:right"></td>
+      <td class="r" data-label="手数料"><input type="number" class="offCell" data-field="feeAmt"   data-id="${o.id}" value="${num(o.feeAmt||0)}"  min="0" step="1" style="width:68px;text-align:right"></td>
+      <td class="r" data-label="粗利"><input type="number" class="offCell" data-field="costAmt"  data-id="${o.id}" value="${profitVal}" min="0" step="1" style="width:84px;text-align:right;${bg}">${tag}</td>
       <td data-label="操作" class="off-action"><button class="ghost" onclick="openEdit('offbook','${o.id}')">詳細</button></td>
     </tr>`;
   }).join('');
@@ -1220,15 +1227,15 @@ function renderOffTable(off){
       const date  = tr.children[0]?.textContent || '';
       const acc   = tr.children[1]?.textContent || '';
       const sales = tr.children[3]?.querySelector('input');
-      const prof  = tr.children[4]?.querySelector('input');
-      const ship  = tr.children[5]?.querySelector('input');
-      const fee   = tr.children[6]?.querySelector('input');
+      const ship  = tr.children[4]?.querySelector('input');
+      const fee   = tr.children[5]?.querySelector('input');
+      const prof  = tr.children[6]?.querySelector('input');
       const meta  = document.createElement('div');
       meta.style.cssText='font-size:11px;color:var(--mut);margin-bottom:4px;line-height:1.3';
       meta.textContent = (date?date+'　':'') + (acc?('販売先: '+acc):'');
       if(memo) memo.parentNode.insertBefore(meta, memo.nextSibling);
       // 数値セルをflex-block化（CSS off-cell を間接適用）
-      [sales,prof,ship,fee].forEach(inp=>{
+      [sales,ship,fee,prof].forEach(inp=>{
         if(!inp) return;
         const td = inp.closest('td');
         if(!td) return;
@@ -1320,7 +1327,11 @@ function renderHist(){
       if(r._kind==='売上') kbn = r.major+(r.minor?` / ${r.minor}`:'');
       else if(r._kind==='経費') kbn = r.acc;
       else if(r._kind==='仕入（参考）') kbn = r.cat;
-      else if(r._kind==='帳簿外（参考）'){ kbn='帳簿外'; amt = num(r.salesAmt)-num(r.costAmt); }
+      else if(r._kind==='帳簿外（参考）'){ kbn='帳簿外';
+        amt = (r.profitManual && r.manualProfit!=null)
+          ? num(r.manualProfit)
+          : Math.max(0, num(r.salesAmt) - num(r.shipAmt||0) - num(r.feeAmt||0));
+      }
       else if(r._kind==='帳簿外（経費）'){ kbn = r.acc||''; }
       const kindKey = ({'売上':'sale','経費':'cost','仕入（参考）':'purch','帳簿外（参考）':'offbook','帳簿外（経費）':'offbook'})[r._kind];
       return `<tr>
@@ -1599,7 +1610,12 @@ function exportPurchCSV(){
 }
 function exportOffbookCSV(){
   const { off } = periodData(filter);
-  const rows = off.map(o=> [o.date, o.client, o.memo, o.salesAmt, o.costAmt, (num(o.salesAmt)-num(o.costAmt)), o.note]);
+  const rows = off.map(o=>{
+    const prof = (o.profitManual && o.manualProfit!=null)
+      ? num(o.manualProfit)
+      : Math.max(0, num(o.salesAmt) - num(o.shipAmt||0) - num(o.feeAmt||0));
+    return [o.date, o.client, o.memo, o.salesAmt, o.costAmt, prof, o.shipAmt||0, o.feeAmt||0, o.note];
+  });
   downloadCSV(`offbook_${filter.year}_${Date.now()}.csv`, csvBuild(
     ['日付','販売先','内容','売上','仕入相当','利益','備考'], rows));
 }
@@ -1626,7 +1642,10 @@ function buildPrintReport(){
   const sumCost =cost.reduce((a,b)=>a+num(b.amount),0);
   const sumPurch=purch.reduce((a,b)=>a+num(b.amount),0);
   const sumOff  =off.reduce((a,b)=>a+num(b.salesAmt),0);
-  const sumOffProfit = off.reduce((a,b)=>a+(num(b.salesAmt)-num(b.costAmt)),0);
+  const sumOffProfit = off.reduce((a,b)=>{
+    if(b && b.profitManual && b.manualProfit!=null) return a + num(b.manualProfit);
+    return a + Math.max(0, num(b.salesAmt) - num(b.shipAmt||0) - num(b.feeAmt||0));
+  },0);
   const profit = sumSales - sumCost;
 
   // 月次

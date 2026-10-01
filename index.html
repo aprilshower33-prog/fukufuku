@@ -521,6 +521,13 @@ input[type=date],input[type=text],input[type=number],select,textarea{max-width:1
     <p class="small">ヘッダー: <code>日付,内容,勘定科目,金額,備考,ソース</code></p>
     <input type="file" id="csvCostFile" accept=".csv,text/csv">
   </div>
+
+  <div class="card">
+    <h2>➕ CSV一括取り込み（帳簿外）</h2>
+    <p class="small">ヘッダー: <code>日付,販売先,内容,売上,送料,手数料,備考</code><br>在庫管理アプリの「③ 帳簿外CSV」をそのまま読み込めます。ソース（在庫:xx-x）が同じ行は、すでに入っていれば飛ばします。</p>
+    <input type="file" id="csvOffFile" accept=".csv,text/csv">
+  </div>
+
 </section>
 
 <!-- ============ 設定 ============ -->
@@ -1883,6 +1890,55 @@ function importCostCSV(){
   };
   r.readAsText(f,'utf-8');
 }
+
+/* ------------ 帳簿外CSV取り込み ------------ */
+;(function(){
+  const inp = document.getElementById('csvOffFile');
+  if(!inp) return;
+  function kkParse(text){
+    text = String(text).replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n');
+    const rows = []; let row = [], cur = '', q = false;
+    for(let i=0;i<text.length;i++){
+      const c = text[i];
+      if(q){
+        if(c === '"'){ if(text[i+1] === '"'){ cur += '"'; i++; } else q = false; }
+        else cur += c;
+      } else if(c === '"'){ q = true; }
+      else if(c === ','){ row.push(cur); cur = ''; }
+      else if(c === '\n'){ row.push(cur); rows.push(row); row = []; cur = ''; }
+      else cur += c;
+    }
+    if(cur !== '' || row.length){ row.push(cur); rows.push(row); }
+    return rows.filter(r => r.length && String(r[0]||'').trim() !== '');
+  }
+  inp.addEventListener('change', function(){
+    const f = inp.files && inp.files[0]; if(!f) return;
+    const rd = new FileReader();
+    rd.onload = function(){
+      const rows = kkParse(rd.result);
+      if(rows.length) rows.shift();            /* ヘッダー行を捨てる */
+      const seen = new Set((db.offbook||[]).map(o => String(o.note||'')).filter(n => n.indexOf('在庫:') === 0));
+      let added = 0, skipped = 0, invalid = 0;
+      rows.forEach(cols=>{
+        const date = String(cols[0]||'').trim();
+        const sales = num(cols[3]);
+        if(!date || sales <= 0){ invalid++; return; }
+        const note = String(cols[6]||'').trim();
+        if(note && seen.has(note)){ skipped++; return; }
+        const ship = num(cols[4]), fee = num(cols[5]);
+        db.offbook.push({ id:uid(), date, client:String(cols[1]||'').trim(), memo:String(cols[2]||'').trim(),
+          salesAmt:sales, costAmt:Math.max(0, sales - ship - fee), shipAmt:ship, feeAmt:fee, note });
+        if(note) seen.add(note);
+        added++;
+      });
+      saveDB(); refreshAll(); inp.value = '';
+      alert('帳簿外CSV取り込み完了：' + added + '件追加'
+        + (skipped ? '／' + skipped + '件は取り込み済みのため飛ばしました' : '')
+        + (invalid ? '／' + invalid + '件は日付または金額が空のため飛ばしました' : ''));
+    };
+    rd.readAsText(f,'utf-8');
+  });
+})();
 
 /* ------------ タブ切替 ------------ */
 function showTab(t){
